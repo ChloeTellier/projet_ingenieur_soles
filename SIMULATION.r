@@ -61,3 +61,113 @@ pp = rpoispp(lambda_function, lmax=4.5, win=owin(c(0,10),c(0,10)),
              alpha_x=alpha_x, b=b, alpha_s= alpha_s, betas_s = betas_s)
 #On reprÃ©sente graphiquement les points de peche dans les 4 sous zones
 plot(pp)
+
+
+
+### ZERO INFLATING
+
+Y = rep(0, len = length(pp$x))
+# Vecteur qui contient un nombre par point de pêche
+# Pour l'instant ce nombre est fixé à 0 mais après il contiendra le nombre de poissons pêchés à ce point
+
+# La fonction peche_attendue permet de calculer uf(xi) = qf * s(xi)
+# Equation 8 du papier de Baptiste
+# Elle prend en argument la position du point, la capturabilité de la flotte, et retourne la peche attendue
+q = 1
+# On fixe la capturabilité a 1
+peche_attendue = function(x, y, q)
+{
+  q * latent_field_function(x, y, alpha_s, betas_s)
+}
+
+# La fonction p0_binomiale calcule, pour chaque point de peche, la probabilité de ne rien pecher
+# Equation 7 du papier de Baptiste
+# Elle prend en argument la position du point, ksi (parametre qui controle l'intensité de 0), q
+ksi = 0
+#  On fixe l'intensité de 0, ksi, à 0.001
+p0_binomiale = function(x, y, ksi, q)
+{
+  exp(-exp(ksi) * peche_attendue(x, y, q))
+}
+
+# D'après le papier de Baptiste, dans le cas d'un "succes" de Bernoulli) on n'a rien pêché
+# Donc on fait 1 - proba pour avoir 1 si pêche successfull, 0 si pêche ratée
+# Loi binomiale de cette proba pour déterminer le succès ou l'échec de chaque point de pêche
+Y = 1 - rbinom(n=length(Y), size=1, prob=p0_binomiale(pp$x, pp$y, ksi, q))
+
+table = data.frame(x=pp$x, y=pp$y, peche=Y)
+
+# On affiche les pêches successfull et les pêches ratées
+ggplot(table) + geom_point(aes(x=x, y=y, col=as.factor(peche)))
+
+# Maintenant on regarde le nombre de poissons potentiellement pêchés à chaque point
+# Pour ça on suit une loi lognormale de moyenne pecheattendue/(1-psucces) et d'ecart type 1
+L = rlnorm(n=length(Y), meanlog=peche_attendue(pp$x, pp$y, q)/(1 - p0_binomiale(pp$x, pp$y, ksi, q)), sdlog=0.1)
+
+# Le nombre de poissons pechés = le nombre de poissons potentiellement peches (L) * le succes ou non de la peche (Y)
+table$peche = L * Y
+ggplot(table) + geom_point(aes(x=x, y=y, col=peche))
+hist(L)
+
+
+
+### Reallocation uniforme des captures
+
+capturetotale = sum(table$peche)
+
+
+## Si on considere 1 zone
+table$L_unezone = mean(table$peche)
+hist(table$L_unezone)
+
+## Si on considere 2 zones
+
+# On coupe selon l'axe des x, à une valeur définie
+xmed = 5
+premierezone = table[which(table$x < xmed),]
+deuxiemezone = table[which(table$x >= xmed),]
+mean_premierezone = mean(premierezone$peche)
+mean_deuxiemezone = mean(deuxiemezone$peche)
+table$L_deuxzones = rep(0, nrow(table))
+table[which(table$x < xmed), "L_deuxzones"] = mean_premierezone
+table[which(table$x >= xmed), "L_deuxzones"] = mean_deuxiemezone
+hist(table$L_deuxzones)
+
+## Si on considere 4 zones
+
+# On coupe selon l'axe des x et l'axe des y, à des valeurs définies
+xmed = 5
+ymed = 5
+premierezone = table[which(table$x < xmed & table$y < ymed),]
+deuxiemezone = table[which(table$x < xmed & table$y >= ymed),]
+troisiemezone = table[which(table$x >= xmed & table$y < ymed),]
+quatriemezone = table[which(table$x >= xmed & table$y >= ymed),]
+mean_premierezone = mean(premierezone$peche)
+mean_deuxiemezone = mean(deuxiemezone$peche)
+mean_troisiemezone = mean(troisiemezone$peche)
+mean_quatriemezone = mean(quatriemezone$peche)
+table$L_quatrezones = rep(0, nrow(table))
+table[which(table$x < xmed & table$y < ymed), "L_quatrezones"] = mean_premierezone
+table[which(table$x < xmed & table$y >= ymed), "L_quatrezones"] = mean_deuxiemezone
+table[which(table$x >= xmed & table$y < ymed), "L_quatrezones"] = mean_troisiemezone
+table[which(table$x >= xmed & table$y >= ymed), "L_quatrezones"] = mean_quatriemezone
+hist(table$L_quatrezones)
+# Si la diff entre les 4 groupes est pas visible, faire :
+hist(table$L_quatrezones, breaks = 100)
+# Et augmenter le 100 jusqu'à ce que ce soit visible
+# C pcq certains groupes sont trop proches (genre la ou les peches sont faibles)
+
+
+# Representation graphique
+
+# Vraies peches
+ggplot(table) + geom_point(aes(x=x, y=y, col=peche))
+
+# Separation en une zone
+ggplot(table) + geom_point(aes(x=x, y=y, col=as.factor(L_unezone)))
+
+# Separation en deux zones
+ggplot(table) + geom_point(aes(x=x, y=y, col=as.factor(L_deuxzones)))
+
+# Separation en quatre zones
+ggplot(table) + geom_point(aes(x=x, y=y, col=as.factor(L_quatrezones)))
